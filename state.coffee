@@ -3,10 +3,16 @@ class State
     @children = {}
     @vars = {}
 
+class Binding
+  constructor: (@var) ->
+  toString: -> "#{@var.get()}"
+  toJSON: -> @var.get()
+
 Template::initState = (initializers) ->
   makeState = (value) ->
     state = new State
     state.vars.value = value
+    value = value.toJSON if value instanceof Binding
     for key, init of initializers
       init = init.call value if typeof init is 'function'
       state.vars[key] = init
@@ -14,24 +20,37 @@ Template::initState = (initializers) ->
 
   @helpers
     vars: -> Template.instance().vars
+    bind: -> Template.instance().bindings
 
   @onCreated ->
     vars = @vars = {}
+    bindings = @bindings = {}
     @state = new State
 
     ## Creating reactive vars and subscription for reactive changes.
     ## State here is fake one, just to allow first autorun to run without errors.
     prop = (name) =>
       v = new ReactiveVar
+      v.descriptor =
+        get: -> v.get()
+        set: (value) -> v.set value
+        enumerable: true
+        configurable: true
+
+      b = new Binding v
+      b.descriptor =
+        get: -> b
+        enumerable: true
+        configurable: true
+
       @autorun =>
         @state.vars[name] = v.get()
 
       # All properties of vars are reactive
-      Object.defineProperty vars, name,
-        get: -> v.get()
-        set: (value) ->
-          v.set value
-        enumerable: true
+      Object.defineProperty vars, name, v.descriptor
+      Object.defineProperty bindings, name, b.descriptor
+
+
     prop name for name of initializers
     prop "value"
     @state = null
@@ -60,7 +79,12 @@ Template::initState = (initializers) ->
       unless template.state?
         template.state = makeState value
 
-      vars[key] = init for key, init of template.state.vars
+      for key, init of template.state.vars
+        if init instanceof Binding
+          Object.defineProperty vars, key, init.var.descriptor
+          Object.defineProperty bindings, key, init.descriptor
+        else
+          vars[key] = init
 
 
 parentView = (view) -> view.originalParentView ? view.parentView
