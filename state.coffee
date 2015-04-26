@@ -1,52 +1,62 @@
 class State
-  constructor: (@children={}, @vars={}) ->
+  constructor: (value) ->
+    @children = {}
+    @vars = {value: value}
 
 Template::initState = (initializers) ->
   @helpers
     vars: -> Template.instance().vars
 
   @onCreated ->
-    console.log 'initState', initializers
     vars = @vars = {}
     @state = new State
+
+    ## Creating reactive vars and subscription for reactive changes.
+    ## State here is fake one, just to allow first autorun to run without errors.
     prop = (name) =>
       v = new ReactiveVar
       @autorun =>
         @state.vars[name] = v.get()
+
+      # All properties of vars are reactive
       Object.defineProperty vars, name,
         get: -> v.get()
-        set: (value) -> v.set value
+        set: (value) ->
+          v.set value
         enumerable: true
     prop name for name of initializers
     prop "value"
+    @state = null
 
     template = @
     @autorun ->
-      currentData = Blaze.getData template.view
-      console.warn 'currentData', currentData, template.view.name
-      {name, value} = currentData ? {}
-      name ?= 'default'
+      data = Blaze.getData(template.view) ? {}
+
+      console.error 'CURRENT DATA isnt Object', data, template if data.constructor isnt Object
+      initialValue = data.value
+      name = data.name ? 'default'
+      route = data.route ? '*'
 
       # Links current state into parent's state
       parent = template
       i = 0
       loop
         ++i
-        console.log 'parent', i, parent
         parent = parentTemplate parent
         break unless parent?
         if parent.state instanceof State
-          template.state = parent.state.children[name] ?= new State
+          template.state = (parent.state.children[route] ?= {})[name] ?= new State initialValue
           break
 
       ## POTENTIAL RESTORE
-      template.state ?= new State
-
-      for key, init of initializers
-        init = init.call value if typeof init is 'function'
-        console.log 'key', key, 'init', init
-        vars[key] = init
-      vars.value = value
+      if template.state?
+        vars[key] = init for key, init of template.state.vars
+      else
+        template.state = new State initialValue
+        for key, init of initializers
+          init = init.call initialValue if typeof init is 'function'
+          vars[key] = init
+        vars.value = initialValue
 
 
 parentView = (view) -> view.originalParentView ? view.parentView
@@ -54,8 +64,9 @@ parentTemplate = (template) ->
   view = parentView(template.view)
   while view and (!view.template or view.name in ['(contentBlock)', '(elseBlock)'])
     view = parentView(view)
-  view?.templateInstance?()
 
+  # Tracker.nonreactive prevents reactivity in parent template to avoid running multiple times.
+  Tracker.nonreactive -> view?.templateInstance?()
 
 
 
