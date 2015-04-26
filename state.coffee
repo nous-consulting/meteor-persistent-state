@@ -1,21 +1,46 @@
 class State
-  constructor: ->
-    @children = {}
-    @vars = {}
+  constructor: (saved) ->
+    @children = saved?.children ? {}
+    @vars = saved?.vars ? {}
 
 class Binding
   constructor: (@var) ->
   toString: -> "#{@var.get()}"
   toJSON: -> @var.get()
 
+
+Template::onStateRequested = (handler) ->
+  handlers = @onStateRequestedHandlers ?= []
+  handlers.push handler
+
+Blaze.TemplateInstance::requestState = ->
+  h = @view.template.onStateRequestedHandlers?[0]
+  if h? then h.call(@) else null
+
+Template::onStateUpdated = (handler) ->
+  handlers = @onStateUpdatedHandlers ?= []
+  handlers.push handler
+
+Blaze.TemplateInstance::triggerOnStateUpdated = ->
+  @stateParent.triggerOnStateUpdated() if @stateParent?
+  # We must run setTimeout here to group update requests.
+  unless @stateUpdatePending
+    @stateUpdatePending = true
+    setTimeout =>
+      h.call(@) for h in @view.template.onStateUpdatedHandlers ? []
+      @stateUpdatePending = false
+    , 10
+
 Template::initState = (initializers) ->
-  makeState = (value) ->
-    state = new State
-    state.vars.value = value
-    value = value.toJSON if value instanceof Binding
+  makeState = (value, saved) ->
+    state = new State saved
+    if value instanceof Binding
+      state.vars.value = value
+      value = value.toJSON()
+    else
+      state.vars.value ?= value
     for key, init of initializers
-      init = init.call value if typeof init is 'function'
-      state.vars[key] = init
+      state.vars[key] ?= if typeof init is 'function' then init.call value else init
     state
 
   @helpers
@@ -26,6 +51,7 @@ Template::initState = (initializers) ->
     vars = @vars = {}
     bindings = @bindings = {}
     @state = new State
+    template = @
 
     ## Creating reactive vars and subscription for reactive changes.
     ## State here is fake one, just to allow first autorun to run without errors.
@@ -33,7 +59,10 @@ Template::initState = (initializers) ->
       v = new ReactiveVar
       v.descriptor =
         get: -> v.get()
-        set: (value) -> v.set value
+        set: (value) ->
+          # TODO Move it in more proper way whey will check changes from database.
+          template.triggerOnStateUpdated()
+          v.set value
         enumerable: true
         configurable: true
 
@@ -55,7 +84,14 @@ Template::initState = (initializers) ->
     prop "value"
     @state = null
 
-    template = @
+    @stateParent = template
+    loop
+      @stateParent = parentTemplate @stateParent
+      break unless @stateParent?
+      if @stateParent.state instanceof State
+        break
+    parent = @stateParent
+
     @autorun ->
       data = Blaze.getData(template.view) ? {}
 
@@ -64,20 +100,20 @@ Template::initState = (initializers) ->
       name = data.name ? 'default'
       route = data.route ? '*'
 
-      # Links current state into parent's state
-      parent = template
-      i = 0
-      loop
-        ++i
-        parent = parentTemplate parent
-        break unless parent?
-        if parent.state instanceof State
-          template.state = (parent.state.children[route] ?= {})[name] ?= makeState value
-          break
+      if parent?
+        r = parent.state.children[route] ?= {}
+        saved = r[name]
+        template.state = if saved instanceof State
+          saved
+        else
+          r[name] = makeState value, saved
 
-      ## POTENTIAL RESTORE
-      unless template.state?
-        template.state = makeState value
+      else
+        ## POTENTIAL RESTORE FROM user defined source
+        template.state = template.requestState()
+
+      unless template.state instanceof State
+        template.state = makeState value, template.state
 
       for key, init of template.state.vars
         if init instanceof Binding
@@ -92,9 +128,7 @@ parentTemplate = (template) ->
   view = parentView(template.view)
   while view and (!view.template or view.name in ['(contentBlock)', '(elseBlock)'])
     view = parentView(view)
-
-  # Tracker.nonreactive prevents reactivity in parent template to avoid running multiple times.
-  Tracker.nonreactive -> view?.templateInstance?()
+  view?.templateInstance?()
 
 
 
