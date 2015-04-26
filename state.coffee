@@ -1,9 +1,17 @@
 class State
-  constructor: (value) ->
+  constructor: ->
     @children = {}
-    @vars = {value: value}
+    @vars = {}
 
 Template::initState = (initializers) ->
+  makeState = (value) ->
+    state = new State
+    state.vars.value = value
+    for key, init of initializers
+      init = init.call value if typeof init is 'function'
+      state.vars[key] = init
+    state
+
   @helpers
     vars: -> Template.instance().vars
 
@@ -33,7 +41,7 @@ Template::initState = (initializers) ->
       data = Blaze.getData(template.view) ? {}
 
       console.error 'CURRENT DATA isnt Object', data, template if data.constructor isnt Object
-      initialValue = data.value
+      value = data.value
       name = data.name ? 'default'
       route = data.route ? '*'
 
@@ -45,18 +53,14 @@ Template::initState = (initializers) ->
         parent = parentTemplate parent
         break unless parent?
         if parent.state instanceof State
-          template.state = (parent.state.children[route] ?= {})[name] ?= new State initialValue
+          template.state = (parent.state.children[route] ?= {})[name] ?= makeState value
           break
 
       ## POTENTIAL RESTORE
-      if template.state?
-        vars[key] = init for key, init of template.state.vars
-      else
-        template.state = new State initialValue
-        for key, init of initializers
-          init = init.call initialValue if typeof init is 'function'
-          vars[key] = init
-        vars.value = initialValue
+      unless template.state?
+        template.state = makeState value
+
+      vars[key] = init for key, init of template.state.vars
 
 
 parentView = (view) -> view.originalParentView ? view.parentView
