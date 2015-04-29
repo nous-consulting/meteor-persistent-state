@@ -3,6 +3,20 @@ class State
     @children = saved?.children ? {}
     @vars = saved?.vars ? {}
 
+  toJSON: ->
+    children: do =>
+      x = {}
+      for own name, child of @children
+        c = {}
+        for own route, state of child
+          c[route] = state.toJSON?() ? state
+        x[name] = c
+      x
+    vars: do =>
+      x = {}
+      x[k] = v for own k,v of @vars when k isnt 'value'
+      x
+
 class Binding
   constructor: (@var) ->
   toString: -> "#{@var.get()}"
@@ -10,11 +24,10 @@ class Binding
 
 
 Template::onStateRequested = (handler) ->
-  handlers = @onStateRequestedHandlers ?= []
-  handlers.push handler
+  @onStateRequestedHandler = handler
 
 Blaze.TemplateInstance::requestState = ->
-  h = @view.template.onStateRequestedHandlers?[0]
+  h = @view.template.onStateRequestedHandler
   if h? then h.call(@) else null
 
 Template::onStateUpdated = (handler) ->
@@ -94,8 +107,10 @@ Template::initState = (initializers) ->
 
     @autorun ->
       data = Blaze.getData(template.view) ? {}
+      if data.constructor isnt Object
+        console.error 'CURRENT DATA isnt Object', data, template
+        throw new Error 'CURRENT DATA isnt Object'
 
-      console.error 'CURRENT DATA isnt Object', data, template if data.constructor isnt Object
       value = data.value
       name = data.name ? 'default'
       route = data.route ? '*'
@@ -110,7 +125,7 @@ Template::initState = (initializers) ->
 
       else
         ## POTENTIAL RESTORE FROM user defined source
-        template.state = template.requestState()
+        template.state = Tracker.nonreactive -> template.requestState()
 
       unless template.state instanceof State
         template.state = makeState value, template.state

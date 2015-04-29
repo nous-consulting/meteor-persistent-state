@@ -1,7 +1,7 @@
 Package.describe({
   name: 'nous:state',
-  version: '0.6.0',
-  summary: 'Heroic state for Metoer :P',
+  version: '0.7.0',
+  summary: 'Heroic state for Metoer',
   git: 'https://github.com/nous-consulting/meteor-persistent-state',
   documentation: 'README.md'
 });
